@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ai-assistant-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_assistant
+      POSTGRES_USER: ai_assistant
+      POSTGRES_PASSWORD: ai_assistant
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_assistant -d ai_assistant"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: ai-assistant-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://127.0.0.1:9200/_cluster/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+
+volumes:
+  postgres_data:
+  elasticsearch_data:
