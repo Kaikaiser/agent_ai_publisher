@@ -1,7 +1,7 @@
-﻿from fastapi import FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, chat, conversations, knowledge
+from app.api.routes import auth, chat, conversations, decision_logs, knowledge, memories, projects
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.init_db import bootstrap_admin, init_db
@@ -22,6 +22,9 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"])
 app.include_router(conversations.router, prefix="/api/conversations", tags=["conversations"])
+app.include_router(memories.router, prefix="/api/memories", tags=["memories"])
+app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
+app.include_router(decision_logs.router, prefix="/api/decision-logs", tags=["decision-logs"])
 
 
 @app.on_event("startup")

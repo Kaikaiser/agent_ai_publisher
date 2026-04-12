@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     database_url: str = 'postgresql+psycopg://ai_assistant:ai_assistant@127.0.0.1:5432/ai_assistant'
     elasticsearch_url: str = 'http://127.0.0.1:9200'
     elasticsearch_index_name: str = 'knowledge_chunks'
+    redis_url: str = 'redis://127.0.0.1:6379/0'
     embedding_dimensions: int = 1024
     pdf_extractor: str = 'auto'
     use_pymupdf4llm: bool = True
@@ -59,6 +60,9 @@ class Settings(BaseSettings):
     hybrid_bm25_top_k: int = 24
     hybrid_final_top_k: int = 8
     rrf_k: int = 60
+    memory_top_k: int = 6
+    session_memory_limit: int = 12
+    redis_session_memory_ttl_minutes: int = 1440
     jwt_secret_key: str = 'change-me'
     jwt_algorithm: str = 'HS256'
     jwt_expire_minutes: int = 1440

@@ -1,157 +1,123 @@
 # 出版社 AI 助手
 
-一个基于 LangChain 的出版社场景 AI 助手项目，当前支持登录鉴权、知识导入、RAG 问答、拍照搜题、历史记录和管理后台式前端。
+面向出版社、教材和教辅运营场景的 AI 助手项目。当前版本重点是把本地可验证的检索链路先跑通：
 
-当前本地已验证的模型提供方：
-
-- OpenAI
-- ARK / 豆包（OpenAI 兼容）
-- GLM / 智谱（OpenAI 兼容）
-
-当前实际跑通的配置为：`GLM + glm-4.5-air + glm-4.5v + embedding-3`。
+- 基础设施：`docker-compose` 一键启动 `PostgreSQL + pgvector + Elasticsearch`
+- 知识检索：书籍重新导入到 PostgreSQL 和 Elasticsearch，放弃旧的 SQLite + FAISS 向量索引
+- 问答链路：FastAPI + LangChain + 混合检索 + 可选智谱 `rerank-3`
+- 评测：离线 faithfulness 评测，读取评测集、调用 judge 模型、输出分数和报告
 
 ## 项目结构
 
 ```text
-backend/    FastAPI + LangChain + SQLAlchemy + FAISS
+backend/    FastAPI + SQLAlchemy + PostgreSQL/pgvector + Elasticsearch
 frontend/   React + Vite
-docs/       技术文档
+docs/       设计与接口文档
 scripts/    Windows 启动脚本
+docker-compose.yml
 ```
 
-## 环境要求
+## 快速开始
 
-- Python 3.11+
-- Node.js 20+
-- 建议使用已验证环境：`D:\anaconda\envs\agent`
-
-## 关键配置
-
-配置文件位于根目录 [.env](E:\daima\agent\ai_assistant\.env)。
-
-当前已支持三套模型配置：
-
-### OpenAI
-
-```env
-LLM_PROVIDER=openai
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_VISION_MODEL=
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-```
-
-### ARK / 豆包
-
-```env
-LLM_PROVIDER=ark
-ARK_API_KEY=
-ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
-ARK_CHAT_MODEL=
-ARK_VISION_MODEL=
-ARK_EMBEDDING_MODEL=
-```
-
-### GLM / 智谱
-
-```env
-LLM_PROVIDER=glm
-GLM_API_KEY=
-GLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4/
-GLM_CHAT_MODEL=glm-4.5-air
-GLM_VISION_MODEL=glm-4.5v
-GLM_EMBEDDING_MODEL=embedding-3
-```
-
-说明：
-
-- 文本问答使用 `CHAT_MODEL`
-- 拍照搜题优先使用 `VISION_MODEL`
-- 如果未配置视觉模型，会自动回退到文本模型
-- RAG 向量化使用 `EMBEDDING_MODEL`
-
-## 快速启动
-
-### 方式一：使用脚本
-
-启动后端：
+1. 复制 `.env.example` 为 `.env`
+2. 启动基础设施
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start_backend.ps1
+docker compose up -d
 ```
 
-开发模式启动后端：
+3. 安装后端依赖
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start_backend.ps1 -Reload
+cd backend
+D:\anaconda\envs\agent\python.exe -m pip install -e .[dev]
 ```
 
-启动前端：
+如果你要启用结构化 PDF 提取，再安装可选依赖：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start_frontend.ps1
+cd backend
+D:\anaconda\envs\agent\python.exe -m pip install -e .[pdf-structured]
 ```
 
-分别弹出两个窗口启动前后端：
+4. 启动后端
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
+cd backend
+D:\anaconda\envs\agent\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-### 方式二：手动启动
-
-后端：
+5. 启动前端
 
 ```powershell
-cd E:\daima\agent\ai_assistant\backend
-D:\anaconda\envs\agent\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-前端：
-
-```powershell
-cd E:\daima\agent\ai_assistant\frontend
+cd frontend
 npm.cmd run dev -- --host 127.0.0.1 --port 5173
 ```
 
-## 访问地址
+## 关键配置
+
+`.env.example` 已包含完整字段，重点关注：
+
+- `DATABASE_URL=postgresql+psycopg://ai_assistant:ai_assistant@127.0.0.1:5432/ai_assistant`
+- `ELASTICSEARCH_URL=http://127.0.0.1:9200`
+- `LLM_PROVIDER`
+- 对应 provider 的 `CHAT_MODEL` / `EMBEDDING_MODEL` / `VISION_MODEL`
+- `ENABLE_RERANK=true`
+- `ZHIPU_RERANK_API_KEY=`
+- `FAITHFULNESS_DATASET_PATH`
+- `FAITHFULNESS_REPORT_PATH`
+
+说明：
+
+- 未配置 `ZHIPU_RERANK_API_KEY` 时会自动关闭外部 rerank，保留混合检索结果。
+- `PyMuPDF4LLM` 是可选依赖，不再作为唯一 PDF 方案；默认仍可退回 `pypdf`。
+- conversations 默认直接写当前 `DATABASE_URL`。旧 SQLite 会话如需迁移，可用 CLI 做一次性导入。
+
+## 常用命令
+
+导入书籍：
+
+```powershell
+cd backend
+D:\anaconda\envs\agent\python.exe -m app.cli.main import-knowledge --username admin --file data\sample_textbook.txt --book-title "小学数学" --doc-type textbook
+```
+
+重建书籍索引：
+
+```powershell
+cd backend
+D:\anaconda\envs\agent\python.exe -m app.cli.main rebuild-knowledge-index
+```
+
+离线评测 faithfulness：
+
+```powershell
+cd backend
+D:\anaconda\envs\agent\python.exe -m app.cli.main evaluate-faithfulness
+```
+
+迁移旧 SQLite conversations：
+
+```powershell
+cd backend
+D:\anaconda\envs\agent\python.exe -m app.cli.main migrate-conversations --source-sqlite-path ..\data\app.db
+```
+
+## API
 
 - 前端：`http://127.0.0.1:5173`
 - 后端：`http://127.0.0.1:8000`
 - 健康检查：`http://127.0.0.1:8000/health`
 - Swagger：`http://127.0.0.1:8000/docs`
 
-## 默认账号
+默认管理员：
 
 - 用户名：`admin`
 - 密码：`admin123456`
 
-## 已验证能力
-
-- 登录
-- 管理员导入知识文档
-- FAISS 检索
-- 文本问答
-- 拍照搜题 OCR 链路
-- 对话历史记录
-
 ## 测试
 
-运行后端测试：
-
 ```powershell
-cd E:\daima\agent\ai_assistant\backend
+cd backend
 D:\anaconda\envs\agent\python.exe -m pytest
 ```
-
-当前已验证：`5 passed`
-
-## 文档导航
-
-查看 [docs/README.md](E:\daima\agent\ai_assistant\docs\README.md)。
-
-## 当前注意事项
-
-- `.env` 中的 `JWT_SECRET_KEY` 仍是开发值，建议改成更长的随机字符串
-- FastAPI 当前仍使用 `on_event`，后续可迁移到 lifespan
-- Windows 终端直接打印中文时可能受本地编码影响，但不影响浏览器和 API 实际返回内容# agent_ai_publisher

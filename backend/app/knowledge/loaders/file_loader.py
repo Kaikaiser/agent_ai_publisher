@@ -117,6 +117,7 @@ def _documents_from_markdown(markdown: str, metadata: dict, page_number: int | N
         meta['section_title'] = section['section_title']
         meta['location'] = _build_location(page_number, section['section_title'], fallback_location, index)
         meta['citation_label'] = _build_citation_label(meta)
+        meta['content_markdown'] = text
         docs.append(Document(page_content=text, metadata=meta))
     return docs
 

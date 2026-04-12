@@ -14,15 +14,15 @@ router = APIRouter()
 
 
 def _read_image(file: UploadFile) -> tuple[bytes, str]:
-    if not file.content_type or not file.content_type.startswith('image/'):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='仅支持上传图片文件')
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file must be an image.")
     image_bytes = file.file.read()
     if not image_bytes:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='上传的图片为空')
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded image is empty.")
     return image_bytes, file.content_type
 
 
-@router.post('/ask', response_model=ChatResponse)
+@router.post("/ask", response_model=ChatResponse)
 def ask(
     payload: ChatRequest,
     current_user: User = Depends(get_current_user),
@@ -36,6 +36,7 @@ def ask(
             username=current_user.username,
             role=current_user.role,
             question=payload.question,
+            session_id=payload.session_id,
             book_title=payload.book_title,
             doc_type=payload.doc_type,
         )
@@ -43,7 +44,7 @@ def ask(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
-@router.post('/recognize-image', response_model=ImageRecognitionResponse)
+@router.post("/recognize-image", response_model=ImageRecognitionResponse)
 def recognize_image(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
@@ -56,14 +57,15 @@ def recognize_image(
     try:
         service = ChatService(db, llm, embeddings, vision_llm=vision_llm)
         recognized_text = service.recognize_image(image_bytes, mime_type)
-        return {'recognized_text': recognized_text}
+        return {"recognized_text": recognized_text}
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
-@router.post('/ask-image', response_model=ImageChatResponse)
+@router.post("/ask-image", response_model=ImageChatResponse)
 def ask_image(
     file: UploadFile = File(...),
+    session_id: Optional[int] = Form(default=None),
     book_title: Optional[str] = Form(default=None),
     doc_type: Optional[str] = Form(default=None),
     current_user: User = Depends(get_current_user),
@@ -80,6 +82,7 @@ def ask_image(
             role=current_user.role,
             image_bytes=image_bytes,
             mime_type=mime_type,
+            session_id=session_id,
             book_title=book_title or None,
             doc_type=doc_type or None,
         )

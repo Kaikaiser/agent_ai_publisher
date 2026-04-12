@@ -13,27 +13,26 @@ class ImageOCRService:
         self.llm = llm
 
     def extract_text(self, image_bytes: bytes, mime_type: str) -> str:
-        encoded = b64encode(image_bytes).decode('utf-8')
+        encoded = b64encode(image_bytes).decode("utf-8")
         message = HumanMessage(
             content=[
-                {'type': 'text', 'text': OCR_PROMPT},
-                {'type': 'image_url', 'image_url': {'url': f'data:{mime_type};base64,{encoded}'}},
+                {"type": "text", "text": OCR_PROMPT},
+                {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}},
             ]
         )
         result = self.llm.invoke([message])
-        content = getattr(result, 'content', '')
+        content = getattr(result, "content", "")
 
-        # Different providers may return either a plain string or a structured content list.
         if isinstance(content, list):
             parts = []
             for item in content:
-                if isinstance(item, dict) and item.get('text'):
-                    parts.append(item['text'])
+                if isinstance(item, dict) and item.get("text"):
+                    parts.append(item["text"])
                 elif isinstance(item, str):
                     parts.append(item)
-            content = '\n'.join(parts)
+            content = "\n".join(parts)
 
         text = str(content).strip()
         if not text:
-            raise ValueError('无法从图片中识别出题目文本')
+            raise ValueError("无法从图片中识别出题目文本。")
         return text

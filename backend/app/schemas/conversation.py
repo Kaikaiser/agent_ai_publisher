@@ -1,10 +1,13 @@
-﻿from typing import List
+from typing import List
 
 from pydantic import BaseModel
 
 
 class ConversationItem(BaseModel):
     id: int
+    session_id: int | None
+    book_id: int | None
+    project_id: int | None
     question: str
     answer: str
     grounded: bool
