@@ -189,6 +189,44 @@ class DecisionLogRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class AgentStepLogRecord(Base):
+    __tablename__ = "agent_step_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    decision_log_id: Mapped[int] = mapped_column(ForeignKey("decision_logs.id", ondelete="CASCADE"), index=True)
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conversation_sessions.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    book_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    step_index: Mapped[int] = mapped_column(Integer, default=1)
+    executed_action: Mapped[str] = mapped_column(String(64), default="")
+    used_query: Mapped[str] = mapped_column(Text, default="")
+    knowledge_hits: Mapped[int] = mapped_column(Integer, default=0)
+    memory_hits: Mapped[int] = mapped_column(Integer, default=0)
+    evidence_quality: Mapped[str] = mapped_column(String(32), default="none")
+    proposed_next_action: Mapped[str] = mapped_column(String(64), default="")
+    chosen_next_action: Mapped[str] = mapped_column(String(64), default="")
+    decision_source: Mapped[str] = mapped_column(String(32), default="rule")
+    guard_reason: Mapped[str] = mapped_column(Text, default="")
+    should_answer: Mapped[bool] = mapped_column(Boolean, default=False)
+    should_clarify: Mapped[bool] = mapped_column(Boolean, default=False)
+    should_refuse: Mapped[bool] = mapped_column(Boolean, default=False)
+    thought_reason: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class MemoryItem(Base):
     __tablename__ = "memory_items"
 

@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     rrf_k: int = 60
     memory_top_k: int = 6
     session_memory_limit: int = 12
+    session_summary_trigger_count: int = 4
+    session_summary_refresh_interval: int = 3
+    session_summary_recent_turns: int = 6
     redis_session_memory_ttl_minutes: int = 1440
     jwt_secret_key: str = 'change-me'
     jwt_algorithm: str = 'HS256'

@@ -5,7 +5,7 @@ import json
 from sqlalchemy.orm import Session
 
 from app.agents.orchestration.service import AgentOrchestrator
-from app.db.models import ConversationRecord, DecisionLogRecord
+from app.db.models import AgentStepLogRecord, ConversationRecord, DecisionLogRecord
 from app.knowledge.vector_store import VectorStoreService
 from app.services.decision import DecisionService
 from app.services.image_ocr import ImageOCRService
@@ -17,7 +17,7 @@ class ChatService:
     def __init__(self, db: Session, llm, embeddings, vision_llm=None) -> None:
         self.db = db
         self.vector_store = VectorStoreService(db, embeddings)
-        self.memory_service = MemoryService(db, embeddings)
+        self.memory_service = MemoryService(db, embeddings, llm=llm)
         self.session_service = ConversationSessionService(db)
         self.project_service = ProjectService(db)
         self.decision_service = DecisionService()
@@ -158,30 +158,54 @@ class ChatService:
                 doc_type=doc_type,
                 decision_mode=decision.decision_mode,
             )
-        self.db.add(
-            DecisionLogRecord(
-                username=username,
-                session_id=session.id,
-                book_id=book_id,
-                project_id=project_id,
-                input_source=input_source,
-                intent_type=decision.intent_type,
-                route_name=decision.route_name,
-                decision_mode=decision.decision_mode,
-                fallback_policy=decision.fallback_policy,
-                selected_tools_json=json.dumps(decision.selected_tools, ensure_ascii=False),
-                memory_scopes_json=json.dumps(decision.memory_scopes, ensure_ascii=False),
-                grounded=result["grounded"],
-                clarification_needed=result.get("clarification_needed", decision.clarification_needed),
-                note=self._compose_decision_note(
-                    base_note=decision.note,
-                    decision_trace=result.get("decision_trace"),
-                    execution_trace=result.get("execution_trace"),
-                    resumed_from_clarification=resumed_from_clarification,
-                    evidence_quality=result.get("evidence_quality", "none"),
-                ),
-            )
+        decision_log = DecisionLogRecord(
+            username=username,
+            session_id=session.id,
+            book_id=book_id,
+            project_id=project_id,
+            input_source=input_source,
+            intent_type=decision.intent_type,
+            route_name=decision.route_name,
+            decision_mode=decision.decision_mode,
+            fallback_policy=decision.fallback_policy,
+            selected_tools_json=json.dumps(decision.selected_tools, ensure_ascii=False),
+            memory_scopes_json=json.dumps(decision.memory_scopes, ensure_ascii=False),
+            grounded=result["grounded"],
+            clarification_needed=result.get("clarification_needed", decision.clarification_needed),
+            note=self._compose_decision_note(
+                base_note=decision.note,
+                decision_trace=result.get("decision_trace"),
+                execution_trace=result.get("execution_trace"),
+                resumed_from_clarification=resumed_from_clarification,
+                evidence_quality=result.get("evidence_quality", "none"),
+            ),
         )
+        self.db.add(decision_log)
+        self.db.flush()
+        for step in result.get("agent_steps", []):
+            self.db.add(
+                AgentStepLogRecord(
+                    decision_log_id=decision_log.id,
+                    username=username,
+                    session_id=session.id,
+                    book_id=book_id,
+                    project_id=project_id,
+                    step_index=int(step.get("step_index", 0)),
+                    executed_action=str(step.get("executed_action", "")),
+                    used_query=str(step.get("used_query", "")),
+                    knowledge_hits=int(step.get("knowledge_hits", 0)),
+                    memory_hits=int(step.get("memory_hits", 0)),
+                    evidence_quality=str(step.get("evidence_quality", "none")),
+                    proposed_next_action=str(step.get("proposed_next_action", "")),
+                    chosen_next_action=str(step.get("chosen_next_action", "")),
+                    decision_source=str(step.get("decision_source", "rule")),
+                    guard_reason=str(step.get("guard_reason", "")),
+                    should_answer=bool(step.get("should_answer", False)),
+                    should_clarify=bool(step.get("should_clarify", False)),
+                    should_refuse=bool(step.get("should_refuse", False)),
+                    thought_reason=str(step.get("thought_reason", "")),
+                )
+            )
         self.db.commit()
         self.db.refresh(record)
         return {
@@ -248,7 +272,7 @@ class ChatService:
             "citation_policy": citation_policy,
             "allow_roleplay": allow_roleplay,
             "note": decision_note,
-            "max_steps": 2,
+            "max_steps": 3,
         }
         return self.orchestrator.run(question, search_func)
 

@@ -3,6 +3,24 @@ from typing import List
 from pydantic import BaseModel
 
 
+class AgentStepLogItemResponse(BaseModel):
+    step_index: int
+    executed_action: str
+    used_query: str
+    knowledge_hits: int
+    memory_hits: int
+    evidence_quality: str
+    proposed_next_action: str
+    chosen_next_action: str
+    decision_source: str
+    guard_reason: str
+    should_answer: bool
+    should_clarify: bool
+    should_refuse: bool
+    thought_reason: str
+    created_at: str
+
+
 class DecisionLogItemResponse(BaseModel):
     id: int
     session_id: int | None
@@ -18,6 +36,7 @@ class DecisionLogItemResponse(BaseModel):
     selected_tools: List[str]
     memory_scopes: List[str]
     note: str
+    steps: List[AgentStepLogItemResponse]
     created_at: str
 
 

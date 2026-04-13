@@ -37,6 +37,7 @@ class AgentOrchestrator:
                 "evidence_quality": "none",
                 "decision_trace": execution["decision_trace"],
                 "execution_trace": execution["execution_trace"],
+                "agent_steps": execution["agent_steps"],
             }
 
         if execution["should_refuse"]:
@@ -48,6 +49,7 @@ class AgentOrchestrator:
                 "evidence_quality": execution["evidence_quality"],
                 "decision_trace": execution["decision_trace"],
                 "execution_trace": execution["execution_trace"],
+                "agent_steps": execution["agent_steps"],
             }
 
         if execution["should_clarify"]:
@@ -62,6 +64,7 @@ class AgentOrchestrator:
                 "evidence_quality": execution["evidence_quality"],
                 "decision_trace": execution["decision_trace"],
                 "execution_trace": execution["execution_trace"],
+                "agent_steps": execution["agent_steps"],
             }
 
         if not execution["documents"]:
@@ -73,6 +76,7 @@ class AgentOrchestrator:
                 "evidence_quality": execution["evidence_quality"],
                 "decision_trace": execution["decision_trace"],
                 "execution_trace": execution["execution_trace"],
+                "agent_steps": execution["agent_steps"],
             }
 
         memory_context = self._format_memory_context(execution["memories"])
@@ -114,6 +118,7 @@ class AgentOrchestrator:
             "evidence_quality": execution["evidence_quality"],
             "decision_trace": execution["decision_trace"],
             "execution_trace": execution["execution_trace"],
+            "agent_steps": execution["agent_steps"],
         }
 
     def _execute_controlled_react(self, question: str, mcp_client: InProcessMcpToolClient) -> dict:
@@ -123,6 +128,7 @@ class AgentOrchestrator:
         documents: list[Document] = []
         decision_trace: list[ThoughtStep] = [plan.initial_thought]
         execution_trace: list[str] = []
+        step_logs: list[dict] = []
         executed_actions: list[str] = []
         next_action = plan.initial_thought.next_action
         reaction: ReactionDecision | None = None
@@ -137,6 +143,7 @@ class AgentOrchestrator:
                 "documents": [],
                 "decision_trace": decision_trace,
                 "execution_trace": execution_trace,
+                "agent_steps": step_logs,
                 "evidence_quality": "none",
                 "should_clarify": False,
                 "should_refuse": False,
@@ -170,7 +177,36 @@ class AgentOrchestrator:
             elif next_action == "memory_retrieval":
                 observation.memory_hits = len(memories)
 
-            reaction = self.decision_service.reassess(plan, observation, executed_actions=executed_actions)
+            reaction = self.decision_service.model_reassess(
+                self.llm,
+                plan,
+                observation,
+                question=question,
+                executed_actions=executed_actions,
+                decision_trace=decision_trace,
+                execution_trace=execution_trace,
+                total_knowledge_hits=len(documents),
+                total_memory_hits=len(memories),
+                evidence_quality=evidence_quality,
+            )
+            step_logs.append(
+                {
+                    "step_index": len(executed_actions),
+                    "executed_action": next_action,
+                    "used_query": observation.used_query or current_query,
+                    "knowledge_hits": observation.knowledge_hits,
+                    "memory_hits": observation.memory_hits,
+                    "evidence_quality": observation.evidence_quality,
+                    "proposed_next_action": reaction.proposed_action or reaction.thought.next_action,
+                    "chosen_next_action": reaction.thought.next_action,
+                    "decision_source": reaction.decision_source,
+                    "guard_reason": reaction.guard_reason,
+                    "should_answer": reaction.should_answer,
+                    "should_clarify": reaction.should_clarify,
+                    "should_refuse": reaction.should_refuse,
+                    "thought_reason": reaction.thought.reason,
+                }
+            )
             decision_trace.append(reaction.thought)
 
             if reaction.should_answer or reaction.should_clarify or reaction.should_refuse:
@@ -186,6 +222,7 @@ class AgentOrchestrator:
             "documents": documents,
             "decision_trace": decision_trace,
             "execution_trace": execution_trace,
+            "agent_steps": step_logs,
             "evidence_quality": evidence_quality,
             "should_clarify": bool(reaction.should_clarify) if reaction is not None else plan.clarification_needed,
             "should_refuse": bool(reaction.should_refuse) if reaction is not None else False,

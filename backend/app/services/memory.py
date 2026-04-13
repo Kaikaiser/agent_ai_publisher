@@ -8,10 +8,11 @@ from datetime import datetime, timezone
 from typing import Iterable
 from uuid import uuid4
 
+from langchain_core.prompts import ChatPromptTemplate
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.db.models import ConversationSession, MemoryItem
+from app.db.models import ConversationRecord, ConversationSession, MemoryItem
 
 try:
     from redis import Redis
@@ -382,9 +383,10 @@ class RedisSessionMemoryStore:
 
 
 class MemoryService:
-    def __init__(self, db: Session, embeddings=None) -> None:
+    def __init__(self, db: Session, embeddings=None, llm=None) -> None:
         self.db = db
         self.embeddings = embeddings
+        self.llm = llm
         self.settings = get_settings()
         self.redis_store = RedisSessionMemoryStore()
 
@@ -411,9 +413,24 @@ class MemoryService:
             redis_items = self.redis_store.list_memories(username=username, book_id=book_id, session_id=session_id)
             if redis_items:
                 items.extend(redis_items)
-            else:
+            items.extend(
+                self._list_pg_memories(
+                    username=username,
+                    scope="session",
+                    session_id=session_id,
+                    book_id=book_id,
+                    memory_types=["session_summary"],
+                )
+            )
+            if not redis_items:
                 items.extend(
-                    self._list_pg_memories(username=username, scope="session", session_id=session_id, book_id=book_id)
+                    self._list_pg_memories(
+                        username=username,
+                        scope="session",
+                        session_id=session_id,
+                        book_id=book_id,
+                        exclude_memory_types=["session_summary"],
+                    )
                 )
 
         items.sort(
@@ -466,6 +483,17 @@ class MemoryService:
                 session_id=session_id,
                 query_embedding=query_embedding,
                 limit=top_k,
+            )
+        )
+        ranked.extend(
+            self._search_pg_memories(
+                username=username,
+                scope="session",
+                session_id=session_id,
+                book_id=book_id,
+                project_id=project_id,
+                query_embedding=query_embedding,
+                memory_types=["session_summary"],
             )
         )
         if not ranked:
@@ -585,6 +613,16 @@ class MemoryService:
             )
             views.append(self._view_from_model(memory))
 
+        session_summary = self._refresh_session_summary(
+            username=username,
+            session_id=session_id,
+            book_id=book_id,
+            project_id=project_id,
+            conversation_id=conversation_id,
+        )
+        if session_summary is not None:
+            views.append(self._view_from_model(session_summary))
+
         self.db.flush()
         return views
 
@@ -595,12 +633,18 @@ class MemoryService:
         session_id: int | None = None,
         book_id: int | None = None,
         project_id: int | None = None,
+        memory_types: list[str] | None = None,
+        exclude_memory_types: list[str] | None = None,
     ) -> list[MemoryRecordView]:
         query = (
             self.db.query(MemoryItem)
             .filter(MemoryItem.scope == scope, MemoryItem.status == "active")
             .order_by(MemoryItem.updated_at.desc(), MemoryItem.id.desc())
         )
+        if memory_types:
+            query = query.filter(MemoryItem.memory_type.in_(memory_types))
+        if exclude_memory_types:
+            query = query.filter(~MemoryItem.memory_type.in_(exclude_memory_types))
 
         if scope == "user":
             query = query.filter(MemoryItem.username == username)
@@ -631,8 +675,11 @@ class MemoryService:
         book_id: int | None,
         project_id: int | None,
         query_embedding: Iterable[float],
+        memory_types: list[str] | None = None,
     ) -> list[RankedMemory]:
         rows = self.db.query(MemoryItem).filter(MemoryItem.scope == scope, MemoryItem.status == "active").all()
+        if memory_types:
+            rows = [item for item in rows if item.memory_type in memory_types]
 
         if scope == "session":
             rows = [
@@ -790,6 +837,122 @@ class MemoryService:
             )
 
         return candidates
+
+    def _refresh_session_summary(
+        self,
+        *,
+        username: str,
+        session_id: int,
+        book_id: int | None,
+        project_id: int | None,
+        conversation_id: int,
+    ) -> MemoryItem | None:
+        if self.llm is None or book_id is None:
+            return None
+
+        conversation_query = (
+            self.db.query(ConversationRecord)
+            .filter(
+                ConversationRecord.username == username,
+                ConversationRecord.session_id == session_id,
+                ConversationRecord.book_id == book_id,
+            )
+            .order_by(ConversationRecord.id.desc())
+        )
+        conversation_count = conversation_query.count()
+        if conversation_count < self.settings.session_summary_trigger_count:
+            return None
+
+        existing_summary = (
+            self.db.query(MemoryItem)
+            .filter(
+                MemoryItem.scope == "session",
+                MemoryItem.memory_type == "session_summary",
+                MemoryItem.username == username,
+                MemoryItem.session_id == session_id,
+                MemoryItem.book_id == book_id,
+                MemoryItem.status == "active",
+            )
+            .order_by(MemoryItem.updated_at.desc(), MemoryItem.id.desc())
+            .first()
+        )
+        if (
+            existing_summary is not None
+            and existing_summary.source_conversation_id is not None
+            and conversation_id - existing_summary.source_conversation_id < self.settings.session_summary_refresh_interval
+        ):
+            return None
+
+        recent_records = (
+            conversation_query.limit(self.settings.session_summary_recent_turns).all()
+        )
+        recent_records.reverse()
+        summary_text = self._generate_session_summary(existing_summary, recent_records)
+        if not summary_text:
+            return None
+
+        return self._upsert_pg_candidate(
+            username=username,
+            session_id=session_id,
+            book_id=book_id,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            candidate={
+                "scope": "session",
+                "memory_type": "session_summary",
+                "summary": "Session summary",
+                "content": summary_text,
+                "salience_score": 0.9,
+                "confidence_score": 0.85,
+            },
+        )
+
+    def _generate_session_summary(
+        self,
+        existing_summary: MemoryItem | None,
+        recent_records: list[ConversationRecord],
+    ) -> str:
+        if self.llm is None or not recent_records:
+            return ""
+
+        history_lines = []
+        for item in recent_records:
+            history_lines.append(f"User: {' '.join(item.question.split())}")
+            history_lines.append(f"Assistant: {' '.join(item.answer.split())}")
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    (
+                        "You compress conversation memory for a publishing-domain assistant. "
+                        "Summarize only durable session context: user goal, confirmed constraints, preferences, "
+                        "resolved subproblems, unresolved questions, and current work state. "
+                        "Do not restate long factual book content. Retrieved knowledge remains the factual source of truth. "
+                        "Write one concise paragraph under 220 words."
+                    ),
+                ),
+                (
+                    "human",
+                    (
+                        "Previous session summary:\n{existing_summary}\n\n"
+                        "Recent conversation turns:\n{recent_history}\n\n"
+                        "Produce an updated session memory summary."
+                    ),
+                ),
+            ]
+        )
+        messages = prompt.format_messages(
+            existing_summary=existing_summary.content if existing_summary is not None else "None",
+            recent_history="\n".join(history_lines),
+        )
+        try:
+            result = self.llm.invoke(messages)
+        except Exception as exc:
+            logger.warning("Session summary generation failed: %s", exc)
+            return ""
+        summary = getattr(result, "content", str(result))
+        normalized = " ".join(str(summary).split()).strip()
+        return normalized[:1000]
 
     def _upsert_pg_candidate(
         self,
